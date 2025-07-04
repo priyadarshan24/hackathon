@@ -73,7 +73,10 @@ def validate_chassis_details_with_crm(firstName: str, lastName: str, chassis_num
     else:
         return "INVALID"
 
-def validate_rc_copy(image: str, chassis_number: str) -> str:
+def validate_rc_copy(first_name_from_rc: str,
+                     last_name_from_rc: str,
+                     chassis_number_from_rc: str,
+                     chassis_number: str) -> str:
     """
     Validates the provided RC copy image against the chassis number.
 
@@ -200,7 +203,10 @@ Your task is to follow this step-by-step verification and update process. **Cruc
 4.  **RC Copy Validation:**
     Please do not try to read or run OCR on the uploaded image. Just forward the same to the tool
     * **When Customer Provides RC Copy (Image):**
-        * **Call Tool:** `validate_rc_copy(image=<customer_provided_image>, chassis_number=<validated_chassis_number>)`
+        * **Carefully analyze the image to extract the owner's first name, last name, and the RC number.** Prioritize accuracy in this extraction.
+        * **Once these details are extracted, **call the `validate_rc_copy` tool.**
+        3. Pass the extracted `first_name_from_rc`, `last_name_from_rc`, and `chassis_number_from_rc` as arguments to the tool, along with the `chassis_number` that you already have from the previous conversation context.
+        * **Call Tool:** `validate_rc_copy(first_name_from_rc=first_name_from_rc, last_name_from_rc=last_name_from_rc, chassis_number_from_rc=chassis_number_from_rc, chassis_number=<validated_chassis_number>)`
         * **If `validate_rc_copy` returns `VALID`:**
             * **Inform Customer:** "Thank you! Your RC copy has been successfully validated. We're now ready to update your mobile number."
             * **Ask:** "Please provide the new mobile number you wish to update in our system."
