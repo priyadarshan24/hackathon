@@ -1,58 +1,10 @@
 from google.adk.agents import Agent, LlmAgent
 from google.adk.tools import FunctionTool
+import pandas as pd
 
-
-def get_current_time(city: str) -> str:
-    """
-    Gets current time in a specified city.
-    Args:
-        city (str): The name of the city to get the current time for.
-    Returns:
-        A string with the current time in the specified city.
-    """
-    return f"The current time in {city} is 10:00 AM."
-
-
-def get_current_weather(city: str) -> str:
-    """
-    Gets current weather in a specified city.
-    Args:
-        city (str): The name of the city to get the current weather for.
-    Returns:
-        A string with the current weather in the specified city.
-    """
-    return f"The current weather in {city} is sunny with a temperature of 25°C."
-
-
-time_tool = FunctionTool(get_current_time)
-weather_tool = FunctionTool(get_current_weather)
-
-
-def validate_chassis(chassis_number: str) -> dict:
-    """
-    Validates the given chassis number in the system.
-
-    Args:
-        chassis_number (str): The chassis number provided by the customer.
-
-    Returns:
-        dict: {
-            'found': True/False,
-            'firstName': str (if found),
-            'lastName': str (if found),
-            'rcNumber': str (if found)
-        }
-    """
-    # Example mock logic
-    if chassis_number == "MBHHWB13SRM910ABC":
-        return {
-            'found': True,
-            'firstName': "John",
-            'lastName': "Doe",
-            'rcNumber': "RC987654321"
-        }
-    else:
-        return {'found': False}
+# Load CSVs once at module level for reuse
+customer_df = pd.read_csv("/Users/priyadarshanp/hackathon/hackathon/multi_tool_agent/crm_data.csv")
+otp_df = pd.read_csv("/Users/priyadarshanp/hackathon/hackathon/multi_tool_agent/dummy_users_otps.csv")
 
 
 def validate_chassis_details_with_crm(firstName: str, lastName: str, chassis_number: str) -> str:
@@ -75,8 +27,7 @@ def validate_chassis_details_with_crm(firstName: str, lastName: str, chassis_num
 
 def validate_rc_copy(first_name_from_rc: str,
                      last_name_from_rc: str,
-                     chassis_number_from_rc: str,
-                     chassis_number: str) -> str:
+                     chassis_number_from_rc: str) -> str:
     """
     Validates the provided RC copy image against the chassis number.
 
@@ -87,8 +38,15 @@ def validate_rc_copy(first_name_from_rc: str,
     Returns:
         str: "VALID" if RC copy matches, "INVALID" otherwise.
     """
-    # Example mock logic
-    return "VALID"
+
+    match = customer_df[customer_df["chassis_number"] == chassis_number_from_rc]
+    if not match.empty:
+        return "VALID"
+    return "INVALID"
+
+if __name__ == '__main__':
+    validate_rc_copy("John", "Doe", "MBHHWB13SRM910ABC", "MBHHWB13SRM910ABC")
+
 
 def send_otp(mobile_number: str) -> bool:
     """
@@ -114,13 +72,13 @@ def validate_otp(otp: str, mobile_number: str) -> str:
     Returns:
         str: "VALID" if OTP is correct, "INVALID" otherwise.
     """
-    # Example mock OTP: 123456
-    if otp == "123456":
-        return "VALID"
-    else:
-        return "INVALID"
+    match = otp_df[
+        (otp_df['mobile_number'] == int(mobile_number)) &
+        (otp_df['otp'] == int(otp))
+        ]
+    return "VALID" if not match.empty else "INVALID"
 
-def update_and_sync_new_mobile_number(new_mobile_number: str) -> str:
+def update_and_sync_new_mobile_number(chassis_number: str, new_mobile_number: str) -> str:
     """
     Updates the new mobile number and syncs it across all connected systems.
 
@@ -130,10 +88,32 @@ def update_and_sync_new_mobile_number(new_mobile_number: str) -> str:
     Returns:
         str: Confirmation message after update.
     """
-    return f"Mobile number {new_mobile_number} updated and synced successfully."
+    # --- Update dummy_users.csv ---
+    customer_df = pd.read_csv("/Users/priyadarshanp/hackathon/hackathon/multi_tool_agent/crm_data.csv")
+    customer_df.columns = customer_df.columns.str.strip()
+
+    updated = False
+    if 'chassis_number' in customer_df.columns:
+        match_idx = customer_df[customer_df['chassis_number'] == chassis_number].index
+        if not match_idx.empty:
+            old_mobile_number = str(customer_df.loc[match_idx[0], 'mob_number'])
+            customer_df.loc[match_idx, 'mob_number'] = new_mobile_number
+            updated = True
+        else:
+            return f"No match found for chassis number {chassis_number} in dummy_users.csv."
+    else:
+        return f"'chassis_number' column not found in dummy_users.csv."
+
+    if updated:
+        customer_df.to_csv("/Users/priyadarshanp/hackathon/hackathon/multi_tool_agent/crm_data.csv", index=False)
+
+    return (
+        f"Mobile number updated from {old_mobile_number} to {new_mobile_number} "
+        f"and synced successfully in both CSVs using chassis number {chassis_number}."
+    )
 
 
-validate_chassis_tool = FunctionTool(validate_chassis)
+# validate_chassis_tool = FunctionTool(validate_chassis)
 validate_chassis_details_with_crm_tool = FunctionTool(validate_chassis_details_with_crm)
 validate_rc_copy_tool = FunctionTool(validate_rc_copy)
 send_otp_tool = FunctionTool(send_otp)
@@ -163,62 +143,44 @@ You are an expert, helpful, and empathetic AI customer support agent for car own
 
 Your task is to follow this step-by-step verification and update process. **Crucially, do not skip steps and always wait for the customer's response before proceeding.**
 
+For RC validation only use the validate_rc_copy_tool.
+
 **Phase 1: Vehicle and Owner Verification**
 
 1.  **Initial Greeting & Chassis Number Request:**
     * When the conversation begins, acknowledge the customer's login issue due to the mobile number.
     * Politely explain that you need to verify their identity to help.
-    * **Ask:** "To help you update your mobile number and regain access, could you please provide your vehicle's chassis number?"
+    * **Ask:** "To help you update your mobile number and regain access, could you please provide your vehicle's RC copy?"
     * **Internal State:** `AWAITING_CHASSIS`
     * **Internal Counter:** `chassis_attempt_count = 0`
 
 2.  **Chassis Number Validation Loop:**
-    * **When Customer Provides Chassis Number:**
-        * Increment `chassis_attempt_count`.
-        * **Call Tool:** `validate_chassis_tool(chassis_number=customer_provided_chassis)`
-        * **If `validate_chassis` returns `{'found': True, 'firstName': <fname>, 'lastName': <lname>, 'rcNumber': <rcnum>}`:**
-            * Store `firstName`, `lastName`, `rcNumber`.
-            * Proceed to **Step 3**.
-        * **If `validate_chassis_tool` returns `{'found': False}` (or any other indication of invalidity):**
+    * **When Customer Provides Chassis Number RC Copy:**
+        * **Carefully analyze the image to extract the owner's first name, last name, and the RC number.** Prioritize accuracy in this extraction.
+        * **Once these details are extracted, **call the `validate_rc_copy` tool.**
+        * **Pass the extracted `first_name_from_rc`, `last_name_from_rc`, and `chassis_number_from_rc` as arguments to the tool.
+        * **`last_name_from_rc`, and `chassis_number_from_rc` are optional arguments.
+        * **Call Tool:** `validate_rc_copy(first_name_from_rc=first_name_from_rc, last_name_from_rc=last_name_from_rc, chassis_number_from_rc=chassis_number_from_rc)`
+        * **If `validate_rc_copy` returns `VALID`:**
+            * **Inform Customer:** "Thank you! Your RC copy has been successfully validated. We're now ready to update your mobile number."
+            * **Ask:** "Please provide the new mobile number you wish to update in our system."
+            * **Internal State:** `AWAITING_NEW_MOBILE_NUMBER`
+            
+        * **If `validate_rc_copy` returns `INVALID`:**
+            * **Inform Customer:** "I'm sorry, but we were unable to fully validate the chassis details in our CRM system based on the information provided. This could be due to a mismatch."
+            * **Ask:** "Could you please try re-uploading your chassis number and your full name so I can try again?"
+            * Increment `chassis_attempt_count`
+            * **Return to:** `AWAITING_CHASSIS` (go back to step 1, effectively starting this phase again).            
             * **If `chassis_attempt_count` < 2:**
-                * **Inform Customer:** "I'm sorry, the chassis number you provided doesn't seem to be in our system. Please double-check and provide the correct 17-digit chassis number."
+                * **Inform Customer:** "I'm sorry, the chassis details you provided doesn't seem to be in our system. Please double-check and provide the correct chassis details."
                 * **Return to:** `AWAITING_CHASSIS` (re-ask for chassis number).
             * **If `chassis_attempt_count` == 2:**
                 * **Inform Customer:** "I apologize, but we're unable to validate the chassis number after multiple attempts. For further assistance, please contact your nearest dealership or call our toll-free number at 983456234. Thank you for reaching out."
                 * **End Conversation.**
 
-3.  **CRM Details Validation:**
-    * **Once `validate_chassis_tool` is successful:**
-        * **Call Tool:** `validate_chassis_details_with_crm_tool(firstName=<extracted_fname>, lastName=<extracted_lname>, chassis_number=<validated_chassis_number>)`
-        * **If `validate_chassis_details_with_crm` returns `VALID`:**
-            * **Inform Customer:** "Thank you. We've successfully validated your chassis number. To proceed with the mobile number update, we need to verify your vehicle's registration details."
-            * **Ask:** "Could you please share a clear copy (photo or scan) of your RC (Registration Certificate) book with me?"
-            * **Internal State:** `AWAITING_RC_COPY`
-        * **If `validate_chassis_details_with_crm_tool` returns `INVALID`:**
-            * **Inform Customer:** "I'm sorry, but we were unable to fully validate the chassis details in our CRM system based on the information provided. This could be due to a mismatch."
-            * **Ask:** "Could you please re-confirm your chassis number and your full name so I can try again?"
-            * **Reset:** `chassis_attempt_count = 0`
-            * **Return to:** `AWAITING_CHASSIS` (go back to step 1, effectively starting this phase again).
-
-4.  **RC Copy Validation:**
-    Please do not try to read or run OCR on the uploaded image. Just forward the same to the tool
-    * **When Customer Provides RC Copy (Image):**
-        * **Carefully analyze the image to extract the owner's first name, last name, and the RC number.** Prioritize accuracy in this extraction.
-        * **Once these details are extracted, **call the `validate_rc_copy` tool.**
-        3. Pass the extracted `first_name_from_rc`, `last_name_from_rc`, and `chassis_number_from_rc` as arguments to the tool, along with the `chassis_number` that you already have from the previous conversation context.
-        * **Call Tool:** `validate_rc_copy(first_name_from_rc=first_name_from_rc, last_name_from_rc=last_name_from_rc, chassis_number_from_rc=chassis_number_from_rc, chassis_number=<validated_chassis_number>)`
-        * **If `validate_rc_copy` returns `VALID`:**
-            * **Inform Customer:** "Thank you! Your RC copy has been successfully validated. We're now ready to update your mobile number."
-            * **Ask:** "Please provide the new mobile number you wish to update in our system."
-            * **Internal State:** `AWAITING_NEW_MOBILE_NUMBER`
-        * **If `validate_rc_copy` returns `INVALID`:**
-            * **Inform Customer:** "I apologize, but we were unable to validate your RC copy. This means we cannot proceed with the mobile number update through this channel."
-            * **Instruct Customer:** "Please contact your nearest dealership or call our toll-free number at 983456234 for further assistance. Thank you for your understanding."
-            * **End Conversation.**
-
 **Phase 2: Mobile Number Update & Confirmation**
 
-5.  **OTP Sending:**
+3.  **OTP Sending:**
     * **When Customer Provides New Mobile Number:**
         * Store the new mobile number.
         * **Inform Customer:** "Thank you. I will now send a One-Time Password (OTP) to this new number for verification."
@@ -226,23 +188,23 @@ Your task is to follow this step-by-step verification and update process. **Cruc
         * **Ask:** "Please share the OTP you receive on your new mobile number."
         * **Internal State:** `AWAITING_OTP`
 
-6.  **OTP Validation:**
+4.  **OTP Validation:**
     * **When Customer Provides OTP:**
         * **Call Tool:** `validate_otp(otp=customer_provided_otp, mobile_number=new_mobile_number)`
         * **If `validate_otp` returns `VALID`:**
             * **Inform Customer:** "Great! Your new mobile number has been successfully validated."
-            * Proceed to **Step 7**.
+            * Proceed to **Step 5**.
         * **If `validate_otp` returns `INVALID`:**
             * **Inform Customer:** "The OTP you entered appears to be incorrect. Please double-check the OTP sent to your new mobile number and share it again."
             * **Return to:** `AWAITING_OTP` (re-ask for OTP).
 
-7.  **Final Update Confirmation:**
+5.  **Final Update Confirmation:**
     * **Once OTP is validated:**
         * **Ask Customer:** "Are you ready for us to update this new mobile number across all your connected car systems and applications?"
         * **Internal State:** `AWAITING_UPDATE_CONSENT`
     * **If Customer Confirms (e.g., "Yes", "Go ahead", "Please update"):**
         * **Inform Customer:** "Excellent! Please wait a moment while I update your details."
-        * **Call Tool:** `update_and_sync_new_mobile_number(new_mobile_number=new_mobile_number)`
+        * **Call Tool:** `update_and_sync_new_mobile_number(chassis_number=chassis_number, new_mobile_number=new_mobile_number, )`
         * **Inform Customer:** "Your mobile number has been successfully updated and synced across all your connected systems. You should now be able to log in with your new number. Is there anything else I can assist you with today?"
         * **End Conversation (Success).**
     * **If Customer Declines (e.g., "No", "Not yet", "Wait"):**
@@ -251,7 +213,7 @@ Your task is to follow this step-by-step verification and update process. **Cruc
             * **Inform Customer:** "Okay, we'll stop here for now. Please feel free to reach out again if you change your mind or need further assistance. Have a great day!"
             * **End Conversation.**
         * **If Customer says "Continue" or similar:**
-            * **Return to:** **Step 7** (re-ask for final update confirmation).
+            * **Return to:** **Step 5** (re-ask for final update confirmation).
 
 **Important Considerations for the Agent:**
 * **Clarification:** If a customer's input is unclear (e.g., they provide something that doesn't look like a chassis number when asked for one), politely re-ask for the specific information.
@@ -260,30 +222,16 @@ Your task is to follow this step-by-step verification and update process. **Cruc
 * **Conciseness:** While thorough, keep your responses to the user as direct and helpful as possible without being overly verbose.
     
     """,
-    tools= [validate_chassis_tool,
-            validate_chassis_details_with_crm_tool,
+    tools= [validate_chassis_details_with_crm_tool,
             validate_rc_copy_tool,
             send_otp_tool,
             validate_otp_tool,
             update_and_sync_new_mobile_number_tool]
 )
 
-time_sub_agent = LlmAgent(
-    name="time_sub_agent",
-    model="gemini-2.0-flash",
-    description="Sub-agent to answer questions about the time in a city.",
-    instruction="You are a time expert. Use the 'get_current_time' tool to answer questions about the current time.",
-    tools=[time_tool])
-
-weather_sub_agent = LlmAgent(
-    name="weather_sub_agent",
-    model="gemini-2.0-flash",
-    description="Sub-agent to answer questions about the weather in a city.",
-    instruction="You are a weather expert. Use the 'get_current_weather' tool to answer questions about the current weather.",
-    tools=[weather_tool])
 
 root_agent = LlmAgent(
-    name="weather_time_agent",
+    name="customer_service_agent",
     model="gemini-2.0-flash",
     description="Agent who acts as an orchestrator to answer different customer support service requests.",
     instruction="""You are the primary AI **Orchestrator Agent for Tata Motors Customer Support**.
